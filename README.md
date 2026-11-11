@@ -1,0 +1,164 @@
+# 동파 방지 온도 감시 시스템
+
+## 현재 구성 (2안 + P-LTE, 2026-11-11 확정)
+
+```
+[엔진룸 floor 현장 함체(히터)]                         [2nd deck ECR]
+PT100 ×2 ─▶ TK4S ×2 ──OUT1──▶ LAN I/O(송신) ─┐                 ┌─ LAN I/O(수신) ──릴레이──▶ GSP Remote Start ─▶ 순환펌프
+               └─RS485─▶ RS485→이더넷 변환기 ─┼─ P-LTE #1 ~~사설 LTE~~ P-LTE #2 ─┤      ▲ DI ◀── GSP 운전 보조접점
+                                             ┘   (고정 IP)          (고정 IP)  └─ 감시 PC (수집·대시보드·알림)
+```
+
+- 제어는 엔진룸 조절기가 현장에서 독립적으로 한다. 사설 LTE로는 기동명령 접점(I/O P2P)과 감시 데이터만 간다.
+- 감시 SW가 추가로 보는 것: **현장 OUT1 vs ECR 릴레이**를 비교해 LTE 구간에서 기동명령이 전달되지 않으면 `기동명령 전달 불일치` 알림, ECR I/O 무응답 시 `ECR I/O 통신 두절` 알림.
+- config.yaml: `modbus.transport: rtu_over_tcp` + 변환기 고정 IP, 각 포인트 `relay`·`feedback`에 ECR I/O 고정 IP와 Modbus 주소.
+- 시험: `python sim_tk_server.py --period 600 --ecr-port 5502 --link-fail-after 300` (300초 뒤 LTE 두절 모사). config의 IP를 127.0.0.1, 포트를 5020/5502로 바꿔 실행.
+
+### P-LTE 구성 확인 사항
+1. 라우터 #1·#2 고정 IP 간 통신: Modbus TCP 502번, RTU over TCP 변환기 포트, I/O P2P(UDP) 허용
+2. **LTE 두절 시 ECR 릴레이 동작**: 'ON 유지(안전 측)' 설정이 되는지 I/O 업체에 확인. 안 되면 '기동명령 전달 불일치' 알림을 받고 GSP에서 수동 기동
+3. 엔진룸 floor·ECR 위치의 LTE 수신 세기 실측, 필요 시 외부 안테나
+4. 감시 PC → 메신저 서버 접속 경로(사설 LTE 또는 사내 LAN)
+5. I/O의 Modbus 주소표 확인 후 config의 address 수정 (예시는 Advantech 관례)
+
+---
+
+## (이전 기록) C안: 온도조절기 + RS485 감시
+
+시운전 기간 동안 옥외 배관 2개소의 온도를 측정해, 저온이 되면 **온도조절기(오토닉스 TK4S)가 직접** 순환펌프 기동신호(무전압 접점)를 SNSYS AMS 또는 로컬 패널로 보낸다.
+감시 PC는 RS485로 값을 **읽기만** 하여 기록·대시보드·알림을 담당한다. → PC나 네트워크가 멈춰도 펌프 기동 제어는 계속된다.
+
+```
+PT100 #1 ─▶ TK4S #1 (ADRS 1) ── OUT1 a접점 ──▶ AMS/패널: 펌프 #1 기동요청
+PT100 #2 ─▶ TK4S #2 (ADRS 2) ── OUT1 a접점 ──▶ AMS/패널: 펌프 #2 기동요청 (펌프 1대면 병렬 연결)
+              │ RS485(A+/B-) 데이지체인
+펌프 운전 접점 ─▶ DI 모듈 (ADRS 10, 선택) ─┤
+              ▼
+        USB-RS485 변환기 ─▶ 감시 PC: collector.py → SQLite → dashboard.py / 메신저 알림
+```
+
+대시보드는 포인트별로 **기동명령(OUT1)** 과 **운전상태(피드백)** 를 함께 보여주고, 아래 타임라인에서 명령 구간과 실제 운전 구간을 나란히 비교할 수 있다. 운전 피드백은 DI 모듈을 달면 켜지는 선택 기능이다(5-1절).
+
+---
+
+## 1. 자재
+
+| 품목 | 사양 | 수량 |
+|---|---|---|
+| 온도조절기 | 오토닉스 TK4S, **RS485 통신 + 알람2 + 릴레이 출력** 모델 (예: TK4S-B4RN 100–240 VAC, TK4S-B2RR 24 VDC) — 주문 전 통신 옵션 포함 여부 확인 | 2 |
+| 온도센서 | PT100 3선식, 배관 클램프(표면)형, IP66 이상 | 2 |
+| 통신 변환기 | USB-RS485 (절연형 권장) | 1 |
+| 함체 | 옥외형 + 스페이스 히터 + 온도조절 스위치 (TK 사용온도 −10~50 ℃) | 1 |
+| 기타 | 단자대, 차폐 트위스트 페어(RS485), 보호용 퓨즈 | – |
+| (선택) 피드백 DI 모듈 | Modbus RTU DI 모듈, 예: Waveshare Modbus RTU Relay (D) 8DI — 펌프 운전 피드백용 | 1 |
+
+## 2. I/O 리스트
+
+| 태그 | 장치 | 신호 | 내용 | 비고 |
+|---|---|---|---|---|
+| TT-01 | TK4S #1 입력 | PT100 | 배관 #1 표면온도 | |
+| TT-02 | TK4S #2 입력 | PT100 | 배관 #2 표면온도 | |
+| PR-01 | TK4S #1 OUT1 | 릴레이 a접점 | 펌프 #1 기동요청 → AMS DI / 패널 Remote Start | 유지(maintained) 신호 |
+| PR-02 | TK4S #2 OUT1 | 릴레이 a접점 | 펌프 #2 기동요청 | 펌프 1대면 PR-01과 병렬 |
+| LA-01/02 | TK4S AL1 | 릴레이 a접점 | 저온 경보 (선택: AMS 경보 DI) | |
+| SA-01/02 | TK4S AL2 | 릴레이 a접점 | 센서 단선 경보 (선택) | |
+| – | TK4S RS485 | Modbus RTU | 감시 PC로 PV·출력·경보 상태 전송 | 읽기 전용 |
+| PF-01 | DI 모듈 DI0 (선택) | 무전압 접점 | 펌프 #1 운전 피드백 ← MCC 보조접점 / 패널 Running 램프 접점 / AMS DO | 펌프 1대면 PF-01만 사용 |
+| PF-02 | DI 모듈 DI1 (선택) | 무전압 접점 | 펌프 #2 운전 피드백 | |
+
+## 3. 온도조절기 설정표 (시운전 시 매뉴얼로 확인하며 입력)
+
+| 항목 | 설정 | 비고 |
+|---|---|---|
+| 입력 종류 | PT100 (℃, 소수점 1자리) | |
+| 제어 방식 | 가열(Heating), ON/OFF 제어 | PID 아님 |
+| SV / 히스테리시스 | **3 ℃ 이하 ON, 6 ℃ 이상 OFF**가 되도록 SV·HYS 설정 | TK의 ON/OFF 동작점 계산 방식은 매뉴얼 확인 후 실측으로 검증 |
+| 입력 단선 시 출력 | **ON(100 %)** 쪽으로 설정 | 센서가 끊겨도 펌프가 돌도록 안전 측 설정 |
+| AL1 | 절대값 하한 경보 1 ℃ | |
+| AL2 | 센서 단선 경보 | |
+| 통신 주소(ADRS) | #1 = 1, #2 = 2 | config.yaml `slave_id`와 일치 |
+| 통신 속도/패리티/정지비트 | 9600 / NONE / 2 | 기본값. 바꾸면 config.yaml도 같이 변경 |
+
+## 3-1. (선택) 펌프 운전 피드백 연결
+
+1. DI 모듈을 같은 RS485 버스에 데이지체인으로 연결하고 통신주소를 10으로 설정한다.
+2. **통신 형식을 버스 전체에서 같게 맞춘다.** TK 기본값은 정지비트 2, 저가 DI 모듈은 보통 정지비트 1이다 → TK의 정지비트(STP)를 1로 바꾸고 config.yaml `stopbits: 1`로 맞추는 것이 간단하다.
+3. 펌프 운전 접점(무전압)을 DI0(#1), DI1(#2)에 결선한다. 접점 출처는 MCC 보조접점이 가장 확실하다(명령이 아닌 실제 운전 상태).
+4. config.yaml의 `feedback:` 줄 주석(#)을 지운다. DI 모듈 주소 체계가 다르면 `address` 값을 모듈 매뉴얼에 맞춘다.
+5. `python collector.py --once`로 `fb=True/False`가 읽히는지 확인한다.
+
+## 4. 설치·실행 (Windows 감시 PC 기준)
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+
+:: 1) config.yaml 의 modbus.port 를 장치관리자에 보이는 COM 번호로 수정
+:: 2) 연결 점검: 1회 읽기
+python collector.py --config config.yaml --once
+
+:: 3) 수집기 상시 실행 (작업 스케줄러 '로그온 시/시작 시 실행' 또는 NSSM 서비스 등록 권장)
+python collector.py --config config.yaml
+
+:: 4) 대시보드 (다른 창에서)
+streamlit run dashboard.py --server.port 8501 -- --config config.yaml
+```
+
+- 로그: `logs/collector.log` (5 MB × 5개 회전)
+- 데이터: `data/freeze.db` (기본 90일 보관)
+
+## 5. 알림 설정
+
+비밀값은 config.yaml에 쓰지 말고 **환경변수**로 넣는다.
+
+| 채널 | config.yaml | 환경변수 |
+|---|---|---|
+| 웹훅(사내 메신저·Teams 워크플로·Slack 등) | `webhook.enabled: true`, 필요 시 `text_key` 변경 | `FREEZE_WEBHOOK_URL` |
+| 텔레그램 | `telegram.enabled: true` | `FREEZE_TELEGRAM_TOKEN`, `FREEZE_TELEGRAM_CHAT_ID` |
+| SmartThings | `smartthings.enabled: true` | `FREEZE_ST_CLIENT_ID`, `FREEZE_ST_CLIENT_SECRET`, `FREEZE_ST_DEVICE_ID` + `data/st_token.json` |
+
+**SmartThings 참고**: 개인 액세스 토큰(PAT)은 24시간 만료라 OAuth 앱을 등록해 얻은 `refresh_token`을 `data/st_token.json`에 `{"refresh_token":"..."}`로 넣어둔다(자동 갱신). 앱에서 **가상 스위치**를 만들고 "스위치가 켜지면 → 알림 보내기" 루틴을 등록한다. 알림 문구는 루틴에 고정되므로 상세 내용은 대시보드에서 본다.
+
+감시 PC에서 외부 인터넷(텔레그램·SmartThings)으로 나가는 통신이 사내망에서 허용되는지 먼저 확인할 것.
+
+## 6. 감시 SW가 보내는 경보
+
+| 구분 | 조건 | 의미 |
+|---|---|---|
+| 통신 두절 | 연속 3회 응답 없음 | 조절기 전원 상실·RS485 배선 문제 |
+| 센서 이상 | PV가 OPEN/HHHH/LLLL | 센서 단선·범위 초과 |
+| 저온 | ≤ 1 ℃ (2 ℃ 이상에서 해제) | 펌프가 돌고 있어도 계속 떨어지는 상황 |
+| 기동출력 불일치 | ≤ 3 ℃인데 OUT1 OFF 상태가 120초 지속 | 조절기 설정 오류 |
+| 펌프 기동요청 ON/OFF | OUT1 변화 | 정보 알림 (`notify_on_pump_change`로 끄기 가능) |
+| 펌프 기동 실패 * | 기동명령 ON인데 60초 안에 운전신호 없음 | 펌프·MCC·Remote 모드·AMS 로직 확인 필요 |
+| 명령 없는 펌프 운전 * | 기동명령 OFF인데 120초 이상 운전 중 | 현장 수동 운전 또는 정지 실패 |
+| 운전 피드백 통신 두절 * | DI 모듈 연속 3회 읽기 실패 | DI 모듈 전원·배선 확인 |
+| 펌프 운전/정지 확인 * | 피드백 변화 | 정보 알림 (명령 후 몇 초 만에 운전됐는지 표시) |
+
+\* 피드백 DI 모듈을 연결한 경우에만 동작
+
+경보가 계속되면 60분마다 재알림하고, 해제되면 해제 알림을 보낸다.
+
+## 7. 장비 없이 시험하기
+
+```bat
+python -m unittest -v                                    :: 판정 로직 단위 시험
+python sim_tk_server.py --period 600 --fault-after 300   :: 가상 TK4S 2대 (10분 주기, 5분 뒤 2번 센서 단선)
+python sim_tk_server.py --period 600 --pump-fail-after 0 :: 피드백 DI 모듈 포함, 펌프 #2 기동 실패 시나리오
+:: (피드백 시험 시 config.yaml 의 feedback 줄 주석 해제)
+:: config.yaml 에서 modbus.transport: rtu_over_tcp 로 바꾼 뒤 collector / dashboard 실행
+```
+
+`rtu_over_tcp`는 RS485-이더넷 게이트웨이를 쓸 때도 그대로 사용한다(`host`, `tcp_port` 지정).
+
+## 8. 시운전 체크리스트
+
+- [ ] PT100 저항값을 측정해 조절기 표시값과 비교 (얼음물 0 ℃ 점검 권장)
+- [ ] SV를 임시로 높여 OUT1 ON → AMS/패널에서 기동요청 수신 → 펌프 실제 기동 확인
+- [ ] (피드백 연결 시) 대시보드에서 기동명령 후 운전상태가 '운전 중'으로 바뀌는 시간 확인 → `start_timeout_sec`를 실측값보다 여유 있게 설정
+- [ ] (피드백 연결 시) 펌프를 Local 모드로 두고 기동명령 → '기동 실패' 알림 수신 확인
+- [ ] 센서 단자를 분리 → 조절기 OPEN 표시, 출력이 ON 쪽으로 가는지, 알림 수신 확인
+- [ ] 조절기 전원 차단 → 감시 SW "통신 두절" 알림 수신 확인
+- [ ] RS485 선 분리 → 펌프 제어는 정상, 감시 SW만 통신 두절 알림 나는지 확인
+- [ ] 함체 히터 동작 확인 (영하 예보 전)

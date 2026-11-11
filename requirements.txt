@@ -1,0 +1,6 @@
+pymodbus==3.8.6
+pyserial==3.5
+PyYAML==6.0.3
+requests==2.34.2
+pandas==3.0.5
+streamlit==1.67.0

@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────
+# 동파 방지 감시 시스템 설정 파일
+#  - 비밀값(토큰·웹훅 URL)은 이 파일에 쓰지 않고 환경변수 이름만 적는다.
+# ─────────────────────────────────────────────────────────────
+site_name: "시운전 동파 방지 감시"
+
+# ── TK4S 온도조절기 통신 ──────────────────────────────────────
+#  P-LTE 구성: 엔진룸 함체의 RS485→이더넷 변환기(고정 IP)에 RTU over TCP로 접속
+#  (변환기는 'Modbus RTU 투명 전송/TCP 서버' 모드로 설정)
+#  ※ 아래 IP·포트는 예시. 실제 라우터 고정 IP로 바꿀 것
+modbus:
+  transport: rtu_over_tcp    # serial(USB-RS485 직결) | rtu_over_tcp(RS485-이더넷 변환기·시뮬레이터)
+  port: COM3                 # serial 일 때만 사용 (리눅스는 /dev/ttyUSB0)
+  baudrate: 9600             # TK 기본값 9600
+  parity: N                  # TK 기본값 NONE
+  stopbits: 2                # TK 기본값 2
+  bytesize: 8
+  timeout: 1.0               # 응답 대기(초)
+  host: 192.168.10.11        # 엔진룸 RS485→이더넷 변환기 (예시)
+  tcp_port: 8899             # 변환기 TCP 서버 포트 (예시)
+
+poll_interval_sec: 5         # 폴링 주기(초)
+
+# ── 측정 포인트 (TK4S 1대 = 1포인트, slave_id = 조절기 통신주소 ADRS) ──
+#  relay    : ECR LAN I/O의 기동 릴레이 상태 → 현장 OUT1과 비교해 'LTE 기동명령 전달 불일치' 감시
+#  feedback : GSP 운전 보조접점 → ECR LAN I/O DI → 운전상태 표시·기동 실패 감시
+#   - host가 있으면 Modbus TCP(LAN I/O), 없으면 조절기와 같은 RS485 버스에서 읽음
+#   - function: coils(FC01) | discrete_inputs(FC02)
+#   - 주소는 Advantech ADAM/WISE 관례(DI = 0X 00001~, DO = 0X 00017~ → 0-기반 0~, 16~) 예시.
+#     ※ 반드시 사용하는 I/O 매뉴얼의 Modbus 주소표로 확인할 것
+#   - 펌프가 1대면 두 포인트에 같은 주소를 적는다. b접점이면 invert: true
+#   - 필요 없으면 해당 줄을 지우면 기능이 꺼진다.
+points:
+  - id: TT-01
+    name: "배관 #1"
+    slave_id: 1
+    relay:    {host: 192.168.20.21, port: 502, slave_id: 1, address: 16, function: coils}
+    feedback: {host: 192.168.20.21, port: 502, slave_id: 1, address: 0, function: coils}
+  - id: TT-02
+    name: "배관 #2"
+    slave_id: 2
+    relay:    {host: 192.168.20.21, port: 502, slave_id: 1, address: 17, function: coils}
+    feedback: {host: 192.168.20.21, port: 502, slave_id: 1, address: 1, function: coils}
+
+# ── 경보 판정 기준 ────────────────────────────────────────────
+#  pump_on_c / pump_off_c 는 조절기에 설정한 값과 반드시 일치시킬 것
+#  (감시 SW는 제어하지 않고, 조절기 출력이 기준대로 나가는지만 확인)
+thresholds:
+  pump_on_c: 3.0             # 이 온도 이하인데 OUT1이 꺼져 있으면 '출력 불일치'
+  pump_off_c: 6.0
+  low_alarm_c: 1.0           # 저온 경보
+  low_alarm_clear_c: 2.0     # 저온 경보 해제(채터링 방지)
+  mismatch_delay_sec: 120    # 출력 불일치 판정 지연
+  comm_fail_count: 3         # 연속 N회 통신 실패 시 경보
+  realert_minutes: 60        # 경보 지속 시 재알림 주기(0=재알림 없음)
+  start_timeout_sec: 60      # 기동명령 후 이 시간 안에 운전신호가 없으면 '기동 실패'
+  stop_timeout_sec: 120      # 명령 OFF인데 이 시간 이상 운전 중이면 '명령 없는 운전'(0=판정 안 함)
+  relay_mismatch_sec: 30     # 현장 OUT1과 ECR 릴레이가 이 시간 이상 다르면 '기동명령 전달 불일치'
+
+notify_on_pump_change: true  # 펌프 기동요청 ON/OFF 변경도 알림
+
+# ── 저장소 ────────────────────────────────────────────────────
+database:
+  path: data/freeze.db
+  retention_days: 90
+
+# ── 알림 채널 (여러 개 동시 사용 가능) ─────────────────────────
+notifiers:
+  console:
+    enabled: true
+  webhook:                   # 사내 메신저·Teams 워크플로·Slack 등 수신 웹훅
+    enabled: false
+    url_env: FREEZE_WEBHOOK_URL
+    text_key: text           # JSON 본문의 메시지 키 이름
+  telegram:
+    enabled: false
+    token_env: FREEZE_TELEGRAM_TOKEN
+    chat_id_env: FREEZE_TELEGRAM_CHAT_ID
+  smartthings:               # 가상 스위치 ON → SmartThings 루틴이 휴대폰 알림
+    enabled: false
+    client_id_env: FREEZE_ST_CLIENT_ID
+    client_secret_env: FREEZE_ST_CLIENT_SECRET
+    device_id_env: FREEZE_ST_DEVICE_ID
+    token_file: data/st_token.json   # 최초 refresh_token 저장 위치(자동 갱신됨)
