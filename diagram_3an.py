@@ -1,4 +1,4 @@
-"""3안(로컬 제어반/스타터 직결) 개략도 생성 스크립트.
+"""3안(로컬 제어반/스타터 직결, USB-RS485 + 라즈베리파이 단일 함체) 개략도 생성 스크립트.
 실행: python diagram_3an.py  ->  diagram_3an.png 생성
 """
 import matplotlib
@@ -18,7 +18,7 @@ ax.set_ylim(0, 7.5)
 ax.axis("off")
 
 COL_FIELD = "#eaf2ff"
-COL_ECR = "#fff3e6"
+COL_EXT = "#f5f0ff"   # 사외망 WiFi / 외부 영역
 COL_BOX = "#ffffff"
 COL_CTRL = "#2e7d32"   # 제어 경로 (녹색, 실선)
 COL_MON = "#1565c0"    # 모니터링 경로 (파란색, 점선)
@@ -35,12 +35,19 @@ def box(x, y, w, h, text, fc=COL_BOX, ec=COL_EDGE, fontsize=10, weight="normal")
     return (x, y, w, h)
 
 
-def arrow(p0, p1, color, style="-", lw=2.2, label=None, label_dy=0.18, fontsize=9):
+def arrow(p0, p1, color, style="-", lw=2.2, label=None, label_dy=0.18, fontsize=9,
+          connectionstyle=None, label_pos=None):
+    kwargs = {}
+    if connectionstyle:
+        kwargs["connectionstyle"] = connectionstyle
     a = FancyArrowPatch(p0, p1, arrowstyle="-|>", mutation_scale=16,
-                         linewidth=lw, color=color, linestyle=style, zorder=2)
+                         linewidth=lw, color=color, linestyle=style, zorder=2, **kwargs)
     ax.add_patch(a)
     if label:
-        mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2 + label_dy
+        if label_pos:
+            mx, my = label_pos
+        else:
+            mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2 + label_dy
         ax.text(mx, my, label, ha="center", va="bottom", fontsize=fontsize, color=color)
 
 
@@ -48,55 +55,57 @@ def arrow(p0, p1, color, style="-", lw=2.2, label=None, label_dy=0.18, fontsize=
 ax.add_patch(mpatches.FancyBboxPatch((0.3, 0.3), 7.6, 6.9,
              boxstyle="round,pad=0.05,rounding_size=0.15",
              linewidth=1.5, edgecolor="#8ba3c7", facecolor=COL_FIELD, zorder=0))
-ax.text(4.1, 7.0, "엔진룸(ER) floor 현장", ha="center", fontsize=13, weight="bold")
+ax.text(4.1, 7.0, "엔진룸(ER) floor 현장 — 단일 함체", ha="center", fontsize=13, weight="bold")
 
 ax.add_patch(mpatches.FancyBboxPatch((8.2, 0.3), 4.5, 6.9,
              boxstyle="round,pad=0.05,rounding_size=0.15",
-             linewidth=1.5, edgecolor="#c79a5b", facecolor=COL_ECR, zorder=0))
-ax.text(10.45, 7.0, "2nd deck ECR", ha="center", fontsize=13, weight="bold")
+             linewidth=1.5, edgecolor="#9b7fc7", facecolor=COL_EXT, zorder=0))
+ax.text(10.45, 7.0, "사외망 WiFi / 외부", ha="center", fontsize=13, weight="bold")
 
-# ── 현장(ER floor) 구성요소 ───────────────────────────────
-pt100 = box(0.7, 5.5, 1.6, 0.8, "PT100 ×2\n(배관 표면온도)", fontsize=9)
+# ── 현장(ER floor) 구성요소 — 모두 단일 함체 내 수납 ───────
+pt100 = box(0.7, 5.5, 1.6, 0.8, "PT100 ×2\n(함체 외벽 부착)", fontsize=9)
 tk4s = box(2.9, 5.5, 1.7, 0.8, "TK4S ×2\n(온도조절기)", fontsize=9)
 starter = box(5.1, 5.5, 2.3, 0.8, "로컬 스타터반\nRemote Start 단자", fontsize=9)
 pump = box(5.5, 4.0, 1.5, 0.7, "순환펌프", fontsize=9)
 di = box(5.3, 2.7, 1.9, 0.7, "DI 모듈 (선택)\n운전 피드백", fontsize=8.5)
-conv = box(0.7, 2.7, 2.6, 0.7, "RS485→이더넷 변환기\n(고정 IP)", fontsize=8.5)
-lte1 = box(0.9, 1.3, 2.2, 0.7, "P-LTE 라우터 #1", fontsize=9)
+conv = box(0.7, 2.7, 2.6, 0.7, "USB-RS485 변환기\n(RPi와 동일 함체)", fontsize=8.5)
+pc = box(0.7, 1.3, 2.6, 0.9, "감시 PC\n(라즈베리 파이)\n수집·대시보드·알림", fontsize=8.5)
 
-# ── ECR 구성요소 ───────────────────────────────
-lte2 = box(8.5, 1.3, 2.2, 0.7, "P-LTE 라우터 #2", fontsize=9)
-pc = box(9.9, 2.7, 2.5, 0.9, "감시 PC\n(수집·대시보드·알림)", fontsize=9)
-note = box(8.5, 4.6, 3.9, 1.4,
-           "ICMS / GSP 경유 없음\n통신(P-LTE) 두절 시에도\n펌프 기동은 영향받지 않음",
-           fc="#fff8e1", fontsize=9, weight="bold")
+# ── 사외망 WiFi / 외부 구성요소 ─────────────────────────────
+browser = box(8.9, 5.0, 3.3, 1.0, "사용자 브라우저\n(대시보드 접속)", fontsize=9)
+wifi = box(8.9, 3.3, 3.3, 0.9, "사외망 WiFi AP\n(기존 선박 WiFi)", fontsize=9)
+kakao = box(8.9, 1.6, 3.3, 1.0, "카카오 오픈채팅\n(경보 알림, 오픈채팅방 4명)", fontsize=8.5)
+note = box(8.9, 0.5, 3.3, 0.9,
+           "제어 경로는 ER 내 완결\n사외망 WiFi 두절 시에도\n펌프 기동/정지 정상 동작",
+           fc="#fff8e1", fontsize=8, weight="bold")
 
 # ── 화살표: 제어 경로 (녹색 실선, 전부 로컬) ──────────────
-arrow((1.5, 5.5), (1.5, 5.5), COL_CTRL)  # placeholder (미사용)
-arrow((2.5, 5.9), (2.9, 5.9), COL_CTRL)              # PT100 -> TK4S
+arrow((2.5, 5.9), (2.9, 5.9), COL_CTRL, label="배선(짧음)")  # PT100 -> TK4S
 arrow((4.6, 5.9), (5.1, 5.9), COL_CTRL, label="OUT1 (a접점)")  # TK4S -> 스타터
 arrow((6.25, 5.5), (6.25, 4.7), COL_CTRL, label="기동 명령")   # 스타터 -> 펌프
 arrow((6.0, 4.0), (6.0, 3.4), "#8a8a8a", style=(0, (4, 2)),
-      label="운전 보조접점(선택)", label_dy=-0.28, fontsize=8)  # 펌프 -> DI (피드백)
+      label="운전 보조접점(선택)", label_dy=0.05, fontsize=8)  # 펌프 -> DI (피드백)
 
-# ── 화살표: 모니터링 경로 (파란 점선, RS485 -> P-LTE -> PC) ─
+# ── 화살표: 모니터링 경로 (파란 점선, RS485 -> USB -> 사외망 WiFi) ─
 arrow((3.0, 5.5), (2.0, 3.4), COL_MON, style=(0, (5, 2)), label="RS485")   # TK4S -> 변환기
 arrow((6.0, 2.7), (3.3, 2.9), COL_MON, style=(0, (5, 2)))                   # DI -> 변환기(버스 합류)
-arrow((2.0, 2.7), (2.0, 2.0), COL_MON, style=(0, (5, 2)))                   # 변환기 -> 라우터1
-arrow((3.1, 1.65), (8.5, 1.65), COL_MON, style=(0, (5, 2)), lw=2.0,
-      label="사설 LTE (모니터링 데이터만, 고정 IP)", fontsize=8.5)          # LTE1 -> LTE2
-arrow((9.6, 2.0), (10.8, 2.7), COL_MON, style=(0, (5, 2)))                  # 라우터2 -> PC
+arrow((2.0, 2.7), (2.0, 2.2), COL_MON, style=(0, (5, 2)), label="USB")      # 변환기 -> RPi (직결)
+arrow((3.3, 1.75), (8.9, 3.75), COL_MON, style=(0, (5, 2)), lw=2.0,
+      connectionstyle="arc3,rad=-0.3",
+      label="사외망 WiFi (모니터링·알림만)", label_pos=(5.8, 1.55), fontsize=8.5)  # RPi -> WiFi AP
+arrow((10.55, 4.2), (10.55, 5.0), COL_MON, style=(0, (5, 2)))               # WiFi AP -> 브라우저
+arrow((10.55, 3.3), (10.55, 2.6), COL_MON, style=(0, (5, 2)))               # WiFi AP -> 카카오
 
 # ── 범례 ───────────────────────────────────────────────────
 legend_handles = [
     plt.Line2D([0], [0], color=COL_CTRL, lw=2.5, label="제어 경로 (로컬, 유선, 통신 무관)"),
-    plt.Line2D([0], [0], color=COL_MON, lw=2.2, linestyle=(0, (5, 2)), label="모니터링 경로 (RS485 + P-LTE, 읽기 전용)"),
+    plt.Line2D([0], [0], color=COL_MON, lw=2.2, linestyle=(0, (5, 2)), label="모니터링 경로 (USB-RS485 + 사외망 WiFi, 읽기전용)"),
     plt.Line2D([0], [0], color="#8a8a8a", lw=2.0, linestyle=(0, (4, 2)), label="피드백 접점 (선택)"),
 ]
 ax.legend(handles=legend_handles, loc="lower center", bbox_to_anchor=(0.5, -0.04),
           ncol=3, fontsize=9, frameon=False)
 
-ax.text(4.1, 0.55, "3안: 로컬 제어반(스타터) 직결 — ICMS·GSP 비경유", ha="center",
+ax.text(4.1, 0.55, "3안: 로컬 제어반(스타터) 직결 + USB-RS485/RPi 단일 함체 — ICMS·GSP 비경유", ha="center",
         fontsize=12, weight="bold", color="#1a1a1a")
 
 plt.tight_layout()
