@@ -169,6 +169,113 @@ streamlit run dashboard.py --server.port 8501 -- --config config.yaml
 
 감시 PC에서 외부 인터넷(텔레그램·SmartThings)으로 나가는 통신이 사내망에서 허용되는지 먼저 확인할 것.
 
+### 5-1. 사외망 WiFi + P-LTE 동시 사용 시 라우팅 설정
+
+감시 PC에 P-LTE와 사외망 WiFi를 동시에 연결하면 기본 게이트웨이 충돌로 Modbus TCP 통신이 끊길 수 있다.
+**P-LTE 대역(192.168.x.x)은 P-LTE로, 나머지 인터넷 트래픽은 WiFi로** 분리해야 한다.
+
+**1단계 — P-LTE 게이트웨이 IP 확인**
+
+```bat
+ipconfig
+```
+
+P-LTE 랜카드의 "기본 게이트웨이" 항목 메모 (예: `192.168.100.1`)
+
+**2단계 — 고정 라우팅 추가** (관리자 권한 명령 프롬프트)
+
+```bat
+:: 192.168.0.0/16 전체를 P-LTE 게이트웨이로 고정 (-p = 재부팅 후에도 유지)
+route add 192.168.0.0 mask 255.255.0.0 192.168.100.1 -p
+```
+
+> `192.168.100.1` 부분을 실제 P-LTE 게이트웨이 IP로 바꿀 것.
+
+**3단계 — 확인**
+
+```bat
+route print -4 | findstr "192.168"
+```
+
+P-LTE 랜카드 인터페이스로 라우팅이 잡히면 정상.
+
+**라우팅 삭제 (필요 시)**
+
+```bat
+route delete 192.168.0.0
+```
+
+---
+
+### 5-2. 카카오 오픈채팅 봇 설정 (비공식 웹 API)
+
+> ⚠️ 카카오 비공식 API 사용. 카카오 업데이트 시 중단될 수 있으며, 토큰을 약 2~4주마다 갱신해야 한다.
+
+#### 사전 준비
+
+1. **봇 전용 카카오 계정** 하나 만들기 (기존 개인 계정과 분리 권장)
+2. PC 카카오톡에서 알림 받을 **오픈채팅방 개설** 후 운전원 4명 이상 초대
+3. 봇 계정도 오픈채팅방에 참여시키기
+
+#### 토큰 발급 (브라우저에서 추출)
+
+1. PC 브라우저에서 `talk.kakao.com` 접속 → 봇 계정으로 로그인
+2. 오픈채팅방 열기
+3. **F12** → **Network** 탭 열기
+4. 채팅창에 아무 메시지 전송
+5. Network 탭 요청 목록에서 `talk.kakao.com` 도메인 요청 클릭
+6. **Request Headers** 에서 `Authorization` 항목 전체 복사
+
+   ```
+   KakaoAK abcdefgh1234567890...
+   ```
+
+7. 감시 PC 환경변수에 저장:
+
+   ```bat
+   :: Windows — 시스템 속성 > 환경 변수 > 새로 만들기
+   변수 이름: FREEZE_KAKAO_AUTH_TOKEN
+   변수 값:   KakaoAK abcdefgh1234567890...
+   ```
+
+#### 오픈채팅방 ID 확인
+
+오픈채팅방 URL에서 ID 부분 복사:
+
+```
+open.kakao.com/o/gXxXxXxX
+                   ^^^^^^^^ ← 이 부분
+```
+
+환경변수에 저장:
+
+```bat
+변수 이름: FREEZE_KAKAO_ROOM_ID
+변수 값:   gXxXxXxX
+```
+
+#### config.yaml 활성화
+
+```yaml
+notifiers:
+  kakao_openchat:
+    enabled: true
+    auth_token_env: FREEZE_KAKAO_AUTH_TOKEN
+    room_id_env: FREEZE_KAKAO_ROOM_ID
+```
+
+#### 토큰 만료 시 갱신
+
+로그에 아래 오류가 뜨면 토큰 만료:
+
+```
+알림 전송 실패(kakao_openchat): PermissionError
+```
+
+위 "토큰 발급" 절차를 반복해 `FREEZE_KAKAO_AUTH_TOKEN` 환경변수 값을 새 토큰으로 교체한다.
+
+---
+
 ## 6. 감시 SW가 보내는 경보
 
 | 구분 | 조건 | 의미 |
